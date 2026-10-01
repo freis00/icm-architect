@@ -2,12 +2,14 @@
  * UCDM · Envío diario de lecciones y audios (Google Apps Script, gratis).
  * Guía de instalación y uso: README.md
  *
- * Cada día, a partir de HORA_ENVIO, envía la lección que toca (lección 1 = FECHA_INICIO)
- * con su audio, tomado de la carpeta de Drive:
- *   - a un canal de Telegram, mediante un bot (API oficial, sin coste);
- *   - y/o por email a la pestaña "Participantes" (Gmail personal: máx. 100 destinatarios al día).
+ * Cada día, a partir de HORA_ENVIO, publica la lección que toca (lección 1 = FECHA_INICIO):
+ * el texto de la pestaña "Lecciones" (si lo hay) y el audio de la carpeta de Drive.
+ *   - En un canal de Telegram, mediante un bot (API oficial, sin coste). Si el texto es largo,
+ *     va antes del audio en uno o varios mensajes. Con PROTEGER_CONTENIDO se escucha y se lee,
+ *     pero no se puede reenviar, copiar ni descargar.
+ *   - Y/o por email a la pestaña "Participantes" (Gmail personal: máx. 100 destinatarios al día).
  * Si falta el audio de hoy no envía nada, te avisa por email y lo reintenta cada hora.
- * Una vez al día revisa que estén subidos los audios de los próximos DIAS_COLCHON días.
+ * Una vez al día te avisa de lo que falta (audio o texto) de los próximos DIAS_COLCHON días.
  */
 
 const CONFIG = {
@@ -16,29 +18,34 @@ const CONFIG = {
   HORA_ENVIO: 7,                  // sale en la primera ejecución a partir de esta hora (0-23)
   TOTAL_LECCIONES: 365,
   BIENVENIDA_DIA_ANTERIOR: true,  // la víspera envía el audio cuyo nombre contenga "bienvenida"
-  DIAS_COLCHON: 7,                // aviso si falta algún audio de los próximos N días
+  DIAS_COLCHON: 7,                // aviso si falta algo de los próximos N días
+  AVISAR_SI_FALTA_TEXTO: true,    // el aviso incluye lecciones sin texto en la pestaña "Lecciones"
 
   CARPETA_AUDIOS_ID: 'PEGA_AQUI_EL_ID_DE_LA_CARPETA',
 
   TELEGRAM_ACTIVO: true,
-  TELEGRAM_CANAL: '',             // '@nombre_del_canal' si es público; '-100…' si es privado
+  TELEGRAM_CANAL: '',             // id del canal privado: '-100…' (ver buscarIdDelCanal)
   TELEGRAM_CANAL_PRUEBAS: '',     // canal o chat para probar sin molestar a nadie
+  LECCION_PRUEBA: 1,              // la que envía probar()
+  PROTEGER_CONTENIDO: true,       // se escucha y se lee, pero no se reenvía, copia ni descarga
 
-  PIE_MENSAJE: 'Tus preguntas, por privado: @tu_usuario',  // va al final de cada lección; '' = sin pie
+  PIE_MENSAJE: 'Tus preguntas, por privado: @tu_usuario',  // cierra cada lección; '' = sin pie
+  ATRIBUCION: '',                 // cuando la FIP dé permiso: la línea de crédito que te indiquen
 
   EMAIL_ACTIVO: false,
   NOMBRE_REMITENTE: 'Facundo · UCDM',
   ADMIN_EMAIL: '',                // dónde llegan los avisos; vacío = la cuenta que instala el script
 };
 
-const MAX_CAPTION_TELEGRAM = 1024;
-const OCULTOS_POR_CORREO = 49;    // Gmail admite 50 destinatarios por mensaje (incluido el "para")
+const MAX_CAPTION_TELEGRAM = 1024;  // texto que acompaña a un audio
+const MAX_MENSAJE_TELEGRAM = 4000;  // Telegram admite 4096 por mensaje; margen por si hay emojis
+const OCULTOS_POR_CORREO = 49;      // Gmail admite 50 destinatarios por mensaje (incluido el "para")
 
 // ---------------------------------------------------------------------------
 // Funciones para ejecutar a mano desde el editor (desplegable de arriba)
 // ---------------------------------------------------------------------------
 
-/** Paso 1: revisa la configuración y lista qué audios hay. No envía nada. */
+/** Paso 1: revisa la configuración, los audios y los textos. No envía nada. */
 function comprobar() {
   const ignorados = [];
   const indice = indexarAudios_(ignorados);
@@ -63,6 +70,12 @@ function comprobar() {
   });
   ignorados.forEach(nombre => console.warn(`Ignorado (no se reconoce el número de lección): ${nombre}`));
 
+  const lecciones = leerLecciones_();
+  const conTexto = Object.keys(lecciones).map(Number).filter(k => lecciones[k].texto).sort((a, b) => a - b);
+  console.log(conTexto.length
+    ? `Pestaña "Lecciones": ${conTexto.length} lecciones con texto (de la ${conTexto[0]} a la ${conTexto[conTexto.length - 1]}).`
+    : 'Pestaña "Lecciones": ninguna lección con texto. Saldrán solo con el audio.');
+
   if (CONFIG.TELEGRAM_ACTIVO) {
     const bot = llamarTelegram_('getMe');
     console.log(`Bot de Telegram OK: @${bot.username}`);
@@ -81,18 +94,18 @@ function comprobar() {
   console.log(activo ? 'Envío automático: ACTIVO.' : 'Envío automático: desactivado (ejecuta activar()).');
 }
 
-/** Paso 2: envía una lección al canal de pruebas y a tu email. No cuenta como enviada. */
-function probar(n = 1) {
+/** Paso 2: envía LECCION_PRUEBA al canal de pruebas y a tu email. No cuenta como enviada. */
+function probar(n = CONFIG.LECCION_PRUEBA) {
   const archivo = (indexarAudios_()[n] || [])[0];
   if (!archivo) throw new Error(`No hay audio para la ${etiqueta_(n)}.`);
-  const texto = textoDeLeccion_(n);
+  const contenido = contenidoDeLeccion_(n);
   if (CONFIG.TELEGRAM_ACTIVO) {
     if (!CONFIG.TELEGRAM_CANAL_PRUEBAS) throw new Error('Rellena TELEGRAM_CANAL_PRUEBAS para probar Telegram.');
-    enviarTelegram_(CONFIG.TELEGRAM_CANAL_PRUEBAS, n, archivo, texto);
-    console.log(`Enviada la ${etiqueta_(n)} al canal de pruebas.`);
+    enviarTelegram_(CONFIG.TELEGRAM_CANAL_PRUEBAS, n, archivo, contenido);
+    console.log(`Enviada la ${etiqueta_(n)} al canal de pruebas (${planTelegram_(contenido).textos.length + 1} mensajes).`);
   }
   if (CONFIG.EMAIL_ACTIVO) {
-    mandarCorreo_(adminEmail_(), [], n, archivo, texto);
+    mandarCorreo_(adminEmail_(), [], n, archivo, contenido);
     console.log(`Enviada la ${etiqueta_(n)} a ${adminEmail_()}.`);
   }
 }
@@ -147,10 +160,12 @@ function ejecutar_(ahora) {
   const n = numeroDeLeccion_(hoy);
   const props = PropertiesService.getScriptProperties();
   let indice = null;
+  let lecciones = null;
   const audios = () => indice || (indice = indexarAudios_());
+  const textos = () => lecciones || (lecciones = leerLecciones_());
 
   if (props.getProperty('colchon') !== hoy) {
-    revisarColchon_(n, audios());
+    revisarColchon_(n, audios(), textos());
     props.setProperty('colchon', hoy);
   }
 
@@ -166,29 +181,43 @@ function ejecutar_(ahora) {
     return;
   }
 
-  const texto = textoDeLeccion_(n);
+  const contenido = contenidoDeLeccion_(n, textos());
   pendientes.forEach(canal => {
     try {
-      if (canal === 'telegram') enviarTelegram_(CONFIG.TELEGRAM_CANAL, n, archivo, texto);
-      if (canal === 'email') enviarEmail_(leerParticipantes_(), n, archivo, texto);
+      if (canal === 'telegram') enviarTelegram_(CONFIG.TELEGRAM_CANAL, n, archivo, contenido, progresoDeHoy_(props, hoy));
+      if (canal === 'email') enviarEmail_(leerParticipantes_(), n, archivo, contenido);
       props.setProperty('enviado_' + canal, hoy);
     } catch (e) {
       avisarUnaVez_(hoy, 'error_' + canal, `Error enviando la ${etiqueta_(n)} por ${canal}`,
-        `${e.message}\n\nSe reintenta cada hora hasta que salga.`);
+        `${e.message}\n\nSe reintenta cada hora, sin repetir los mensajes que ya salieron.`);
     }
   });
 }
 
-function revisarColchon_(n, indice) {
+/** Cuántos mensajes de la lección de hoy han salido ya por Telegram, para no repetirlos al reintentar. */
+function progresoDeHoy_(props, hoy) {
+  return {
+    leer: () => {
+      const [dia, enviados] = (props.getProperty('telegram_partes') || '').split('|');
+      return dia === hoy ? Number(enviados) : 0;
+    },
+    guardar: enviados => props.setProperty('telegram_partes', `${hoy}|${enviados}`),
+  };
+}
+
+function revisarColchon_(n, indice, lecciones) {
   const desde = Math.max(n + 1, CONFIG.BIENVENIDA_DIA_ANTERIOR ? 0 : 1);
   const hasta = Math.min(n + CONFIG.DIAS_COLCHON, CONFIG.TOTAL_LECCIONES);
-  const faltan = [];
+  const lineas = [];
   for (let k = desde; k <= hasta; k++) {
-    if (!indice[k]) faltan.push(`- ${etiqueta_(k)} (sale el ${fechaDeLeccion_(k)})`);
+    const falta = [];
+    if (!indice[k]) falta.push('audio');
+    if (CONFIG.AVISAR_SI_FALTA_TEXTO && k >= 1 && !(lecciones[k] && lecciones[k].texto)) falta.push('texto');
+    if (falta.length) lineas.push(`- ${etiqueta_(k)} (sale el ${fechaDeLeccion_(k)}): falta ${falta.join(' y ')}`);
   }
-  if (faltan.length) {
-    const cuantos = faltan.length === 1 ? 'Falta 1 audio' : `Faltan ${faltan.length} audios`;
-    avisar_(`${cuantos} de los próximos ${CONFIG.DIAS_COLCHON} días`, faltan.join('\n'));
+  if (lineas.length) {
+    const cuantas = lineas.length === 1 ? '1 lección' : `${lineas.length} lecciones`;
+    avisar_(`${cuantas} sin completar en los próximos ${CONFIG.DIAS_COLCHON} días`, lineas.join('\n'));
   }
 }
 
@@ -227,9 +256,13 @@ function fechaDeLeccion_(n) {
   return Utilities.formatDate(fecha, 'UTC', 'dd/MM/yyyy');
 }
 
+function sinAcentos_(texto) {
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 /** "UCDM - lección 018.m4a" → 18; "UCDM - lección 9.m4a" → 9; "UCDM - bienvenida.m4a" → 0. */
 function numeroEnNombre_(nombre) {
-  const plano = nombre.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const plano = sinAcentos_(nombre);
   if (/bienvenida/i.test(plano)) return 0;
   const m = plano.match(/leccion\D{0,4}(\d{1,3})(?!\d)/i);
   return m ? Number(m[1]) : null;
@@ -276,14 +309,40 @@ function pestana_(nombre) {
   return libro ? libro.getSheetByName(nombre) : null;
 }
 
-/** Texto que acompaña al audio: cabecera + título y nota de la pestaña "Lecciones" + PIE_MENSAJE. */
-function textoDeLeccion_(n) {
+/** Pestaña "Lecciones": A = nº de lección, B = título, C = texto. Devuelve nº → {titulo, texto}. */
+function leerLecciones_() {
+  const lecciones = {};
   const hoja = pestana_('Lecciones');
-  const fila = hoja ? hoja.getDataRange().getValues().find(f => Number(f[0]) === n && f[0] !== '') : null;
-  const cabecera = n === 0 ? 'Bienvenida' : `Lección ${n}`;
-  const partes = [cabecera].concat(fila ? [fila[1], fila[2]] : []).map(String).filter(s => s.trim());
-  const pie = CONFIG.PIE_MENSAJE ? '\n\n' + CONFIG.PIE_MENSAJE : '';
-  return partes.join('\n\n').slice(0, MAX_CAPTION_TELEGRAM - pie.length) + pie;
+  if (!hoja) return lecciones;
+  hoja.getDataRange().getValues().forEach(fila => {
+    if (fila[0] === '' || isNaN(Number(fila[0]))) return;
+    lecciones[Number(fila[0])] = {
+      titulo: String(fila[1]).trim(),
+      texto: String(fila[2]).replace(/\r\n?/g, '\n').trim(),
+    };
+  });
+  return lecciones;
+}
+
+/** Lo que se publica de una lección: cabecera, texto (con la atribución) y pie. */
+function contenidoDeLeccion_(n, lecciones) {
+  const fila = (lecciones || leerLecciones_())[n] || {};
+  return {
+    cabecera: cabecera_(n, fila.titulo),
+    texto: fila.texto ? [fila.texto, CONFIG.ATRIBUCION].filter(Boolean).join('\n\n') : '',
+    pie: CONFIG.PIE_MENSAJE || '',
+  };
+}
+
+/** "Lección 13. Un mundo sin significado engendra temor." (admite el título con o sin "Lección 13."). */
+function cabecera_(n, titulo) {
+  if (n === 0) return titulo || 'Bienvenida';
+  if (!titulo) return `Lección ${n}`;
+  return /^leccion\s*\d/i.test(sinAcentos_(titulo)) ? titulo : `Lección ${n}. ${titulo}`;
+}
+
+function textoPlano_(contenido) {
+  return [contenido.cabecera, contenido.texto, contenido.pie].filter(Boolean).join('\n\n');
 }
 
 /** Emails de la pestaña "Participantes": columna A, desde la fila 2. */
@@ -297,8 +356,63 @@ function leerParticipantes_() {
 }
 
 // ---------------------------------------------------------------------------
-// Canales
+// Telegram
 // ---------------------------------------------------------------------------
+
+/**
+ * Mensajes de Telegram de una lección. Si todo cabe en el pie del audio, sale un solo mensaje.
+ * Si no, el texto va antes en uno o varios mensajes y el audio cierra con el pie.
+ */
+function planTelegram_(contenido) {
+  const plano = textoPlano_(contenido);
+  if (plano.length <= MAX_CAPTION_TELEGRAM) {
+    return { textos: [], pieAudio: conCabeceraEnNegrita_(plano, contenido.cabecera) };
+  }
+  const cuerpo = [contenido.cabecera, contenido.texto].filter(Boolean).join('\n\n');
+  return {
+    textos: trocear_(cuerpo, MAX_MENSAJE_TELEGRAM)
+      .map((trozo, i) => (i === 0 ? conCabeceraEnNegrita_(trozo, contenido.cabecera) : escaparHtml_(trozo))),
+    pieAudio: escaparHtml_(contenido.pie),
+  };
+}
+
+/** Parte un texto en trozos de `max` caracteres como mucho: por párrafos y, si no basta, por frases. */
+function trocear_(texto, max) {
+  const trozos = [];
+  let actual = '';
+  const cerrar = () => {
+    if (actual.trim()) trozos.push(actual.trim());
+    actual = '';
+  };
+  texto.split('\n').forEach(linea => {
+    while (linea.length > max) {
+      const corte = puntoDeCorte_(linea, max);
+      cerrar();
+      trozos.push(linea.slice(0, corte).trim());
+      linea = linea.slice(corte).trim();
+    }
+    if (actual && actual.length + 1 + linea.length > max) cerrar();
+    actual = actual ? `${actual}\n${linea}` : linea;
+  });
+  cerrar();
+  return trozos;
+}
+
+function puntoDeCorte_(linea, max) {
+  const finDeFrase = linea.lastIndexOf('. ', max - 1);
+  if (finDeFrase > max / 2) return finDeFrase + 1;
+  const espacio = linea.lastIndexOf(' ', max);
+  return espacio > 0 ? espacio : max;
+}
+
+function escaparHtml_(texto) {
+  return texto.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function conCabeceraEnNegrita_(texto, cabecera) {
+  if (!cabecera || !texto.startsWith(cabecera)) return escaparHtml_(texto);
+  return `<b>${escaparHtml_(cabecera)}</b>${escaparHtml_(texto.slice(cabecera.length))}`;
+}
 
 function llamarTelegram_(metodo, payload) {
   const token = PropertiesService.getScriptProperties().getProperty('TELEGRAM_TOKEN');
@@ -313,18 +427,38 @@ function llamarTelegram_(metodo, payload) {
   return datos.result;
 }
 
-function enviarTelegram_(chatId, n, archivo, texto) {
+/** Publica la lección: texto (si no cabe junto al audio) y audio. `progreso` evita repetir al reintentar. */
+function enviarTelegram_(chatId, n, archivo, contenido, progreso) {
   if (!chatId) throw new Error('Falta el id del canal de Telegram.');
-  llamarTelegram_('sendAudio', {
-    chat_id: String(chatId),
-    audio: blobDeAudio_(n, archivo),
-    title: n === 0 ? 'Bienvenida' : `Lección ${n}`,
-    performer: CONFIG.NOMBRE_REMITENTE,
-    caption: texto,
+  const plan = planTelegram_(contenido);
+  const comun = { chat_id: String(chatId), protect_content: String(CONFIG.PROTEGER_CONTENIDO) };
+
+  const envios = plan.textos.map(html => () => llamarTelegram_('sendMessage', Object.assign({
+    text: html,
+    parse_mode: 'HTML',
+    link_preview_options: JSON.stringify({ is_disabled: true }),
+  }, comun)));
+  envios.push(() => {
+    const audio = Object.assign({
+      audio: blobDeAudio_(n, archivo),
+      title: n === 0 ? 'Bienvenida' : `Lección ${n}`,
+      performer: CONFIG.NOMBRE_REMITENTE,
+    }, comun);
+    if (plan.pieAudio) Object.assign(audio, { caption: plan.pieAudio, parse_mode: 'HTML' });
+    llamarTelegram_('sendAudio', audio);
   });
+
+  for (let i = progreso ? progreso.leer() : 0; i < envios.length; i++) {
+    envios[i]();
+    if (progreso) progreso.guardar(i + 1);
+  }
 }
 
-function enviarEmail_(destinatarios, n, archivo, texto) {
+// ---------------------------------------------------------------------------
+// Email
+// ---------------------------------------------------------------------------
+
+function enviarEmail_(destinatarios, n, archivo, contenido) {
   if (!destinatarios.length) return;
   const correos = Math.ceil(destinatarios.length / OCULTOS_POR_CORREO);
   const necesarios = destinatarios.length + correos;
@@ -333,15 +467,15 @@ function enviarEmail_(destinatarios, n, archivo, texto) {
     throw new Error(`Cuota de Gmail insuficiente: hacen falta ${necesarios} destinatarios y quedan ${quedan} hoy.`);
   }
   for (let i = 0; i < destinatarios.length; i += OCULTOS_POR_CORREO) {
-    mandarCorreo_(adminEmail_(), destinatarios.slice(i, i + OCULTOS_POR_CORREO), n, archivo, texto);
+    mandarCorreo_(adminEmail_(), destinatarios.slice(i, i + OCULTOS_POR_CORREO), n, archivo, contenido);
   }
 }
 
-function mandarCorreo_(para, ocultos, n, archivo, texto) {
+function mandarCorreo_(para, ocultos, n, archivo, contenido) {
   const mensaje = {
     to: para,
     subject: `UCDM · ${n === 0 ? 'Bienvenida' : 'Lección ' + n}`,
-    body: texto,
+    body: textoPlano_(contenido),
     name: CONFIG.NOMBRE_REMITENTE,
     attachments: [blobDeAudio_(n, archivo)],
   };
