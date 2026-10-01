@@ -24,6 +24,8 @@ const CONFIG = {
   TELEGRAM_CANAL: '',             // '@nombre_del_canal' si es público; '-100…' si es privado
   TELEGRAM_CANAL_PRUEBAS: '',     // canal o chat para probar sin molestar a nadie
 
+  PIE_MENSAJE: 'Tus preguntas, por privado: @tu_usuario',  // va al final de cada lección; '' = sin pie
+
   EMAIL_ACTIVO: false,
   NOMBRE_REMITENTE: 'Facundo · UCDM',
   ADMIN_EMAIL: '',                // dónde llegan los avisos; vacío = la cuenta que instala el script
@@ -274,13 +276,14 @@ function pestana_(nombre) {
   return libro ? libro.getSheetByName(nombre) : null;
 }
 
-/** Texto que acompaña al audio: cabecera + título y nota opcionales de la pestaña "Lecciones". */
+/** Texto que acompaña al audio: cabecera + título y nota de la pestaña "Lecciones" + PIE_MENSAJE. */
 function textoDeLeccion_(n) {
   const hoja = pestana_('Lecciones');
   const fila = hoja ? hoja.getDataRange().getValues().find(f => Number(f[0]) === n && f[0] !== '') : null;
   const cabecera = n === 0 ? 'Bienvenida' : `Lección ${n}`;
   const partes = [cabecera].concat(fila ? [fila[1], fila[2]] : []).map(String).filter(s => s.trim());
-  return partes.join('\n\n').slice(0, MAX_CAPTION_TELEGRAM);
+  const pie = CONFIG.PIE_MENSAJE ? '\n\n' + CONFIG.PIE_MENSAJE : '';
+  return partes.join('\n\n').slice(0, MAX_CAPTION_TELEGRAM - pie.length) + pie;
 }
 
 /** Emails de la pestaña "Participantes": columna A, desde la fila 2. */

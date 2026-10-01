@@ -15,6 +15,7 @@ Lee los audios directamente de tu carpeta de Drive. No necesita servidor ni tene
 - **Si falta el audio de hoy**, no envía nada, te avisa por email y lo reintenta cada hora: en cuanto lo subes, sale solo.
 - **Cada día te avisa si falta algún audio de los próximos 7 días**, para que nunca llegues al día sin él.
 - Nunca envía dos veces la misma lección por el mismo canal.
+- Cada lección lleva al final la línea de `PIE_MENSAJE` (por defecto, a quién escribir las preguntas por privado).
 
 ## Instalación (todo desde el navegador, unos 20 minutos)
 
@@ -35,12 +36,20 @@ Lee los audios directamente de tu carpeta de Drive. No necesita servidor ni tene
 
 ### 2. Crea el canal y el bot de Telegram
 
-1. En Telegram: **Nuevo canal**, privado, por ejemplo "UCDM · Lecciones". Crea otro igual llamado "UCDM · Pruebas" (solo tú).
+1. En Telegram: **Nuevo canal**, privado, por ejemplo "UCDM · Lecciones". Crea otro igual llamado "UCDM · Pruebas" (solo tú). No vincules ningún grupo de debate: así el canal queda sin comentarios, que es como viene por defecto.
 2. Abre el chat con **@BotFather**, escribe `/newbot` y sigue los pasos. Te dará un **token** (algo como `123456:ABC...`). No lo compartas.
 3. Añade el bot como **administrador** de los dos canales, con permiso para publicar mensajes.
 4. En Apps Script: **Configuración del proyecto** (engranaje) **> Propiedades del script > Añadir propiedad**: nombre `TELEGRAM_TOKEN`, valor el token.
 5. Publica cualquier mensaje en cada canal. En el editor, elige la función `buscarIdDelCanal` en el desplegable de arriba y pulsa **Ejecutar**. Abajo verás los ids (empiezan por `-100`).
 6. Pega el id del canal de alumnos en `TELEGRAM_CANAL` y el de pruebas en `TELEGRAM_CANAL_PRUEBAS`. Guarda.
+
+### Preguntas por privado
+
+Los alumnos no pueden escribir en el canal. Las preguntas te llegan a tu Telegram personal:
+
+1. Si no tienes nombre de usuario: **Ajustes > Nombre de usuario** y crea uno (por ejemplo `@facu_ucdm`).
+2. **Ajustes > Privacidad y seguridad > Número de teléfono**: "¿Quién puede ver mi número?" = **Nadie**. Así te escriben por el usuario sin ver tu número.
+3. En `CONFIG`, cambia `@tu_usuario` en `PIE_MENSAJE` por el tuyo. Esa línea va al final de cada lección. Ponla también en la descripción del canal.
 
 La primera vez que ejecutes algo, Google pedirá permisos y dirá "Google no ha verificado esta aplicación". Es tu propio script: **Configuración avanzada > Ir a ... (no seguro) > Permitir**.
 

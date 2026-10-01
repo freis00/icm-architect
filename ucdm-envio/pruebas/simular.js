@@ -89,6 +89,7 @@ function crearEntorno(opciones) {
     CONFIG.TELEGRAM_CANAL = '-1001';
     CONFIG.TELEGRAM_CANAL_PRUEBAS = '-1002';
     CONFIG.EMAIL_ACTIVO = ${!!opciones.email};
+    CONFIG.PIE_MENSAJE = 'Preguntas: @facu';
     this.api = { CONFIG, ejecutar_, numeroDeLeccion_, numeroEnNombre_, hoyLocal_, horaLocal_, textoDeLeccion_,
                  fechaDeLeccion_, leerParticipantes_, indexarAudios_, comprobar, probar, activar, tick };
   `, ctx);
@@ -148,7 +149,8 @@ function audio(nombre, extra = {}) {
     email: true,
     hojas: {
       Participantes: participantes,
-      Lecciones: [['n', 'titulo', 'nota'], [3, 'Título de prueba', 'Nota de Facundo'], ['', '', '']],
+      Lecciones: [['n', 'titulo', 'nota'], [3, 'Título de prueba', 'Nota de Facundo'], ['', '', ''],
+        [7, 'Larga', 'x'.repeat(2000)]],
     },
   });
   assert.strictEqual(api.leerParticipantes_().length, 60);
@@ -161,9 +163,15 @@ function audio(nombre, extra = {}) {
 
   assert.strictEqual(api.indexarAudios_()[9][0].getName(), 'UCDM - lección 009.m4a');
   assert.strictEqual(api.indexarAudios_()[4].length, 1);
-  assert.strictEqual(api.textoDeLeccion_(3), 'Lección 3\n\nTítulo de prueba\n\nNota de Facundo');
+  assert.strictEqual(api.textoDeLeccion_(3), 'Lección 3\n\nTítulo de prueba\n\nNota de Facundo\n\nPreguntas: @facu');
+  assert.strictEqual(api.textoDeLeccion_(5), 'Lección 5\n\nPreguntas: @facu');
+  assert.strictEqual(api.textoDeLeccion_(0), 'Bienvenida\n\nPreguntas: @facu');
+  const larga = api.textoDeLeccion_(7);
+  assert.strictEqual(larga.length, 1024);
+  assert.ok(larga.endsWith('\n\nPreguntas: @facu'));
+  api.CONFIG.PIE_MENSAJE = '';
   assert.strictEqual(api.textoDeLeccion_(5), 'Lección 5');
-  assert.strictEqual(api.textoDeLeccion_(0), 'Bienvenida');
+  api.CONFIG.PIE_MENSAJE = 'Preguntas: @facu';
 
   const inicio = Date.UTC(2026, 9, 9, 0, 7);
   const fin = Date.UTC(2026, 9, 29, 0, 7);
